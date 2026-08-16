@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+*$py.class
+dist/
+build/
+*.spec
+.agents/
+.gemini/
+*.tmp
+_temp_wrapped_*.py
+builder_config.json
