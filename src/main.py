@@ -315,6 +315,10 @@ class UltimateBuilderApp:
 
         out_dir = self.ent_output_dir.get().strip() or os.path.join(BASE_DIR, "dist")
         app_name = self.ent_app_name.get().strip() or "App"
+        if app_name.lower().endswith('.exe'):
+            app_name = app_name[:-4].strip()
+        if not app_name:
+            app_name = "App"
         ico_path = self.ent_ico.get().strip() or None
 
         self._save_config()

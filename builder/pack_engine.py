@@ -47,6 +47,7 @@ def extract_project_imports(project_dir: str, entry_file: str = None) -> tuple[l
     
     if project_dir and os.path.exists(project_dir):
         for root, dirs, files in os.walk(project_dir):
+            dirs[:] = [d for d in dirs if not d.startswith(('.', '__', 'build', 'dist')) and d.lower() not in ('venv', '.venv', 'env', 'node_modules', '.git', '.idea', '.vscode')]
             for f in files:
                 if f.endswith('.py') and not f.startswith('_temp_wrapped'):
                     files_to_scan.append(os.path.join(root, f))
@@ -169,6 +170,7 @@ EMBEDDED_PUBLIC_KEY_PEM = """{PUBLIC_KEY_PEM}"""
 EMBEDDED_SUPPORT_CONFIG = json.loads(r"""{SUPPORT_CONFIG_JSON}""")
 
 def _enforce_security():
+    pass
     # 1. Kích hoạt chống debugger & phân tích tiến trình
     {START_WATCHER_CALL}
     
@@ -291,9 +293,10 @@ def _run_pyinstaller(target_script, output_dir, app_name, work_dir, project_dir,
             for sub_r, sub_d, _ in os.walk(src_sub):
                 cmd.append(f"--paths={sub_r}")
 
-        # Tự động gom toàn bộ thư mục và tệp tin dự án vào file .EXE qua --add-data
+        # Tự động gom toàn bộ thư mục và tệp tin dự án vào file .EXE qua --add-data (bỏ qua môi trường ảo và tệp rác)
+        ignored_names = {'venv', '.venv', 'env', 'node_modules', '.git', '__pycache__', 'build', 'dist', '.agents', '.idea', '.vscode'}
         for item in os.listdir(project_dir):
-            if item.startswith(('_temp_wrapped', '.git', '__pycache__', 'build', 'dist', '.agents')) or item.endswith(('.spec', '.exe')):
+            if item.startswith(('_temp_wrapped', '.')) or item.endswith(('.spec', '.exe')) or item.lower() in ignored_names:
                 continue
             full_item_path = os.path.join(project_dir, item)
             if os.path.isdir(full_item_path):
@@ -348,6 +351,13 @@ def build_executable(
     """
     Biên dịch file Python thành file .exe độc lập và xuất trực tiếp vào thư mục chỉ định (output_dir).
     """
+    # Chuẩn hóa tên ứng dụng
+    app_name = app_name.strip()
+    if app_name.lower().endswith('.exe'):
+        app_name = app_name[:-4].strip()
+    if not app_name:
+        app_name = "App"
+
     os.makedirs(output_dir, exist_ok=True)
     
     def log(text):
@@ -445,6 +455,7 @@ def build_executable(
         if project_dir and os.path.isdir(project_dir):
             log("[*] Đang sao chép các tệp tài nguyên phụ trợ sang thư mục xuất...")
             for root_p, dirs, files in os.walk(project_dir):
+                dirs[:] = [d for d in dirs if not d.startswith(('.', '__', 'build', 'dist')) and d.lower() not in ('venv', '.venv', 'env', 'node_modules', '.git', '.idea', '.vscode')]
                 rel_dir = os.path.relpath(root_p, project_dir)
                 dest_sub = output_dir if rel_dir == "." else os.path.join(output_dir, rel_dir)
                 for f_name in files:

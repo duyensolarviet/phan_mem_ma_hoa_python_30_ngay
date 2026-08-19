@@ -49,7 +49,8 @@ DEFAULT_PACKAGES = {
 
 
 class HardwareID:
-    """HWID 2.0: Tạo mã định danh phần cứng sâu cho máy tính Windows."""
+    """HWID 2.0: Tạo mã định danh phần cứng sâu cho máy tính Windows kèm bộ nhớ đệm (Cache)."""
+    _CACHED_HWID = None
     
     @staticmethod
     def get_machine_guid() -> str:
@@ -96,6 +97,9 @@ class HardwareID:
 
     @classmethod
     def generate_hwid(cls) -> str:
+        if cls._CACHED_HWID:
+            return cls._CACHED_HWID
+
         guid = cls.get_machine_guid()
         uuid = cls.get_system_uuid()
         disk = cls.get_disk_serial()
@@ -107,6 +111,7 @@ class HardwareID:
             
         sha = hashlib.sha512(f"SALT_HWID_V2_{raw}".encode('utf-8')).hexdigest().upper()
         hwid = f"{sha[0:4]}-{sha[4:8]}-{sha[8:12]}-{sha[12:16]}"
+        cls._CACHED_HWID = hwid
         return hwid
 
 
@@ -137,38 +142,130 @@ class TimeGuard:
 
 
 class LicenseStorage:
-    """Lưu trữ và mã hóa dữ liệu bản quyền trên máy khách."""
+    """Lưu trữ và mã hóa dữ liệu bản quyền trên máy khách ĐA TẦNG (Triple-Anchor Anti-Reset & Auto-Healing)."""
     
     @staticmethod
-    def _get_storage_path(app_name: str) -> str:
+    def _get_hwid_key() -> bytes:
+        return hashlib.sha256(HardwareID.generate_hwid().encode()).digest()
+
+    @staticmethod
+    def _get_primary_path(app_name: str) -> str:
         appdata = os.environ.get("APPDATA", os.path.expanduser("~"))
         storage_dir = os.path.join(appdata, f".{app_name}_license")
         os.makedirs(storage_dir, exist_ok=True)
         return os.path.join(storage_dir, "license.dat")
 
+    @staticmethod
+    def _get_secondary_path(app_name: str) -> str:
+        local_app = os.environ.get("LOCALAPPDATA", os.environ.get("TEMP", os.path.expanduser("~")))
+        h = hashlib.sha256(f"SEC_{app_name}_{HardwareID.generate_hwid()}".encode()).hexdigest()[:16]
+        storage_dir = os.path.join(local_app, "Microsoft", "Windows", "Caches")
+        os.makedirs(storage_dir, exist_ok=True)
+        return os.path.join(storage_dir, f"~{h}.tmp")
+
+    @staticmethod
+    def _get_registry_subpath(app_name: str) -> str:
+        h = hashlib.sha256(f"REG_{app_name}_{HardwareID.generate_hwid()}_V2".encode()).hexdigest()
+        guid_str = f"{{{h[0:8]}-{h[8:12]}-{h[12:16]}-{h[16:20]}-{h[20:32]}}}"
+        return f"Software\\Classes\\CLSID\\{guid_str}"
+
     @classmethod
-    def load_data(cls, app_name: str) -> dict:
-        path = cls._get_storage_path(app_name)
-        if not os.path.exists(path):
+    def _read_file_store(cls, filepath: str) -> dict:
+        if not filepath or not os.path.exists(filepath):
             return {}
         try:
-            with open(path, "rb") as f:
+            with open(filepath, "rb") as f:
                 encrypted = f.read()
-            key = hashlib.sha256(HardwareID.generate_hwid().encode()).digest()
+            key = cls._get_hwid_key()
             decrypted = bytes([b ^ key[i % len(key)] for i, b in enumerate(encrypted)])
             return json.loads(decrypted.decode('utf-8'))
         except Exception:
             return {}
 
     @classmethod
+    def _write_file_store(cls, filepath: str, data_bytes: bytes):
+        try:
+            os.makedirs(os.path.dirname(filepath), exist_ok=True)
+            with open(filepath, "wb") as f:
+                f.write(data_bytes)
+        except Exception:
+            pass
+
+    @classmethod
+    def _read_registry_store(cls, app_name: str) -> dict:
+        if sys.platform != "win32":
+            return {}
+        try:
+            reg_sub = cls._get_registry_subpath(app_name)
+            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, reg_sub, 0, winreg.KEY_READ)
+            b64_val, _ = winreg.QueryValueEx(key, "Data")
+            winreg.CloseKey(key)
+            encrypted = base64.b64decode(b64_val.encode('utf-8'))
+            k = cls._get_hwid_key()
+            decrypted = bytes([b ^ k[i % len(k)] for i, b in enumerate(encrypted)])
+            return json.loads(decrypted.decode('utf-8'))
+        except Exception:
+            return {}
+
+    @classmethod
+    def _write_registry_store(cls, app_name: str, encrypted_bytes: bytes):
+        if sys.platform != "win32":
+            return
+        try:
+            reg_sub = cls._get_registry_subpath(app_name)
+            key = winreg.CreateKey(winreg.HKEY_CURRENT_USER, reg_sub)
+            b64_val = base64.b64encode(encrypted_bytes).decode('utf-8')
+            winreg.SetValueEx(key, "Data", 0, winreg.REG_SZ, b64_val)
+            winreg.CloseKey(key)
+        except Exception:
+            pass
+
+    @classmethod
+    def load_data(cls, app_name: str) -> dict:
+        """Đọc dữ liệu từ 3 tầng (AppData, LocalAppData Cache, Registry) và tự động khôi phục nếu bị xóa."""
+        d1 = cls._read_file_store(cls._get_primary_path(app_name))
+        d2 = cls._read_file_store(cls._get_secondary_path(app_name))
+        d3 = cls._read_registry_store(app_name)
+
+        all_stores = [d for d in (d1, d2, d3) if d]
+        if not all_stores:
+            return {}
+
+        # Hợp nhất dữ liệu: Lấy mốc thời gian lần đầu (first_run_time) sớm nhất
+        merged = {}
+        first_runs = [d["first_run_time"] for d in all_stores if d.get("first_run_time")]
+        if first_runs:
+            merged["first_run_time"] = min(first_runs)
+
+        last_seens = [d["last_seen_time"] for d in all_stores if d.get("last_seen_time")]
+        if last_seens:
+            merged["last_seen_time"] = max(last_seens)
+
+        for d in all_stores:
+            if d.get("license_key"):
+                merged["license_key"] = d["license_key"]
+                break
+
+        # Nếu phát hiện một trong các nơi bị xóa -> Tự động khôi phục lại toàn bộ (Auto-Healing)
+        if not d1 or not d2 or not d3:
+            cls.save_data(app_name, merged)
+
+        return merged
+
+    @classmethod
     def save_data(cls, app_name: str, data: dict):
-        path = cls._get_storage_path(app_name)
+        """Ghi đồng bộ dữ liệu vào cả 3 tầng bảo vệ."""
         try:
             raw = json.dumps(data).encode('utf-8')
-            key = hashlib.sha256(HardwareID.generate_hwid().encode()).digest()
+            key = cls._get_hwid_key()
             encrypted = bytes([b ^ key[i % len(key)] for i, b in enumerate(raw)])
-            with open(path, "wb") as f:
-                f.write(encrypted)
+            
+            # 1. Ghi Primary File (AppData)
+            cls._write_file_store(cls._get_primary_path(app_name), encrypted)
+            # 2. Ghi Secondary File (LocalAppData Cache)
+            cls._write_file_store(cls._get_secondary_path(app_name), encrypted)
+            # 3. Ghi Registry CLSID Anchor
+            cls._write_registry_store(app_name, encrypted)
         except Exception:
             pass
 

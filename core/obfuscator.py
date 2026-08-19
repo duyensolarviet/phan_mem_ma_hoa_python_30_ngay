@@ -26,24 +26,43 @@ def _generate_random_var_name(length: int = 18) -> str:
 
 class MilitaryStringEncryptor(ast.NodeTransformer):
     """
-    Biến đổi mọi chuỗi ký tự thành biểu thức giải mã đa tầng:
-    (lambda d, k, s: ''.join(chr(((c ^ k) - s) % 256) for c in d))([byte_list], key, salt)
+    Biến đổi mọi chuỗi ký tự thành biểu thức giải mã byte UTF-8 đa tầng:
+    (bytes([((_x ^ key) - salt) % 256 for _x in [enc_bytes]]).decode('utf-8', errors='ignore'))
+    Bảo toàn 100% tiếng Việt có dấu, ký tự đặc biệt, emoji và tương thích hoàn hảo với f-string/match-case.
     """
     def __init__(self):
         super().__init__()
         self.strings_encrypted_count = 0
+
+    def visit_JoinedStr(self, node):
+        # Không mã hóa các hằng chuỗi nằm trực tiếp trong f-string (JoinedStr.values) để tránh lỗi AST unparse
+        for i, v in enumerate(node.values):
+            if isinstance(v, ast.FormattedValue):
+                node.values[i] = self.visit(v)
+        return node
+
+    def visit_MatchValue(self, node):
+        # MatchValue bắt buộc phải là literal constant
+        return node
+
+    def visit_AnnAssign(self, node):
+        # Không mã hóa type annotations dạng chuỗi (forward reference)
+        if node.value is not None:
+            node.value = self.visit(node.value)
+        return node
 
     def visit_Constant(self, node):
         if isinstance(node.value, str) and len(node.value) > 0 and not node.value.startswith("__"):
             key = random.randint(11, 240)
             salt = random.randint(3, 47)
             
-            encrypted_bytes = [((ord(c) + salt) ^ key) % 256 for c in node.value]
-            self.strings_encrypted_count += 1
-            
-            # Biểu thức giải mã lambda on-the-fly
-            decrypt_code = f"(''.join(chr(((_x ^ {key}) - {salt}) % 256) for _x in {encrypted_bytes}))"
             try:
+                utf8_bytes = list(node.value.encode('utf-8'))
+                encrypted_bytes = [((b + salt) ^ key) % 256 for b in utf8_bytes]
+                self.strings_encrypted_count += 1
+                
+                # Biểu thức giải mã byte UTF-8 an toàn tuyệt đối
+                decrypt_code = f"(bytes([((_x ^ {key}) - {salt}) % 256 for _x in {encrypted_bytes}]).decode('utf-8', errors='ignore'))"
                 decrypt_expr = ast.parse(decrypt_code).body[0].value
                 return ast.copy_location(decrypt_expr, node)
             except Exception:
@@ -53,7 +72,7 @@ class MilitaryStringEncryptor(ast.NodeTransformer):
 
 class OpaquePredicateInjector(ast.NodeTransformer):
     """
-    Chèn các biểu thức bất đẳng thức toán học (Opaque Predicates) vào hàm:
+    Chèn các biểu thức bất đẳng thức toán học (Opaque Predicates) vào hàm sync và async:
     - (x * x >= 0) luôn True
     - (x * (x + 1) % 2 == 0) luôn True với mọi số nguyên x
     - (x^2 + y^2 < 0) luôn False
@@ -63,7 +82,7 @@ class OpaquePredicateInjector(ast.NodeTransformer):
         super().__init__()
         self.junk_count = 0
 
-    def visit_FunctionDef(self, node):
+    def _inject_junk(self, node):
         self.generic_visit(node)
         
         # Tạo bất đẳng thức toán học ngẫu nhiên
@@ -77,12 +96,22 @@ class OpaquePredicateInjector(ast.NodeTransformer):
         chosen_junk = random.choice(predicates)
         try:
             junk_ast = ast.parse(chosen_junk).body
-            node.body = junk_ast + node.body
+            # Bảo tồn docstring nếu câu lệnh đầu tiên là docstring
+            if node.body and isinstance(node.body[0], ast.Expr) and isinstance(node.body[0].value, ast.Constant) and isinstance(node.body[0].value.value, str):
+                node.body = [node.body[0]] + junk_ast + node.body[1:]
+            else:
+                node.body = junk_ast + node.body
             self.junk_count += 1
         except Exception:
             pass
             
         return node
+
+    def visit_FunctionDef(self, node):
+        return self._inject_junk(node)
+
+    def visit_AsyncFunctionDef(self, node):
+        return self._inject_junk(node)
 
 
 def obfuscate_python_source(
@@ -125,7 +154,7 @@ import base64 as _b64
 {var_payload} = "{b64_payload}"
 def {var_loader}(_data, _s):
     _raw = _b64.b64decode(_data)
-    return bytes([(_x - _s) % 256 for _x in _raw]).decode('utf-8')
+    return bytes([(_x - _s) % 256 for _x in _raw]).decode('utf-8', errors='ignore')
 exec({var_loader}({var_payload}, {salt_shift}), globals(), locals())
 """
         return wrapper_code
