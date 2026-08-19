@@ -201,7 +201,7 @@ class UltimateBuilderApp:
         self.spn_trial.insert(0, str(self.saved_cfg.get("trial_val", "20")))
         self.spn_trial.pack(side="left")
 
-        self.cbo_trial_unit = ttk.Combobox(row_trial, values=["Phút", "Giờ", "Ngày"], state="readonly", font=("Segoe UI", 9), width=6)
+        self.cbo_trial_unit = ttk.Combobox(row_trial, values=["Phút", "Giờ", "Ngày", "Tháng", "Năm"], state="readonly", font=("Segoe UI", 9), width=6)
         self.cbo_trial_unit.set(self.saved_cfg.get("trial_unit", "Phút"))
         self.cbo_trial_unit.pack(side="left", padx=(4, 15))
 
@@ -323,7 +323,7 @@ class UltimateBuilderApp:
 
         self._save_config()
 
-        # Tính toán ngày thử (hỗ trợ phút, giờ, ngày)
+        # Tính toán ngày thử (hỗ trợ phút, giờ, ngày, tháng, năm)
         try:
             trial_raw = float(self.spn_trial.get().strip()) if self.var_auto_trial.get() else 0.0
             unit = self.cbo_trial_unit.get().strip()
@@ -331,6 +331,12 @@ class UltimateBuilderApp:
                 trial_days = trial_raw / 1440.0
             elif unit == "Giờ":
                 trial_days = trial_raw / 24.0
+            elif unit == "Ngày":
+                trial_days = trial_raw
+            elif unit == "Tháng":
+                trial_days = trial_raw * 30.0
+            elif unit == "Năm":
+                trial_days = trial_raw * 365.0
             else:
                 trial_days = trial_raw
         except ValueError:

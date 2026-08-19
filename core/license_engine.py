@@ -538,40 +538,57 @@ class LicenseGuard:
         self.hwid = HardwareID.generate_hwid()
         self.verifier = LicenseVerifier(public_key_pem)
 
-    def _start_runtime_trial_watcher(self, time_allowed: float, first_run: float):
-        """Luồng ngầm giám sát thời gian thực: Tự động khóa và đóng ứng dụng ngay lập tức khi hết hạn dùng thử lúc app đang mở."""
+    def _start_runtime_watcher(self, time_allowed: float = 0.0, first_run: float = 0.0, expiry_ts: float = 0.0, is_trial: bool = True):
+        """Luồng ngầm kiểm tra liên tục 5 giây/lần: Tự động khóa và ngắt ứng dụng ngay lập tức khi hết hạn dùng thử hoặc hết hạn Key."""
         def _watcher_loop():
-            # Kiểm tra mỗi 5 giây cho các gói theo phút/giờ, 30 giây cho các gói theo ngày
-            sleep_interval = 5.0 if time_allowed <= 86400.0 else 30.0
             while True:
-                time.sleep(sleep_interval)
+                time.sleep(5.0) # Chu kỳ kiểm tra thời gian thực đúng 5 giây/lần
                 try:
                     curr = time.time()
-                    time_spent = curr - first_run
-                    if time_spent >= time_allowed:
-                        # 1. Định dạng thông báo hết hạn
-                        trial_d = float(self.trial_days)
-                        if trial_d < (1.0 / 24.0):
-                            mins = max(1, int(round(trial_d * 1440)))
-                            msg = f"❌ ĐÃ HẾT THỜI GIAN DÙNG THỬ ({mins} PHÚT)!\n\nỨng dụng sẽ tự động đóng ngay bây giờ.\nVui lòng liên hệ Admin qua Zalo/Telegram để kích hoạt bản quyền."
-                        elif trial_d < 1.0:
-                            hrs = max(1, int(round(trial_d * 24)))
-                            msg = f"❌ ĐÃ HẾT THỜI GIAN DÙNG THỬ ({hrs} GIỜ)!\n\nỨng dụng sẽ tự động đóng ngay bây giờ.\nVui lòng liên hệ Admin qua Zalo/Telegram để kích hoạt bản quyền."
-                        else:
-                            days = int(round(trial_d))
-                            msg = f"❌ ĐÃ HẾT THỜI GIAN DÙNG THỬ ({days} NGÀY)!\n\nỨng dụng sẽ tự động đóng ngay bây giờ.\nVui lòng liên hệ Admin qua Zalo/Telegram để kích hoạt bản quyền."
-                        
-                        # 2. Cập nhật và lưu lại trạng thái hết hạn vào 3 tầng bảo vệ
+                    is_expired = False
+                    msg = ""
+                    
+                    # 1. Kiểm tra dùng thử
+                    if is_trial and time_allowed > 0 and first_run > 0:
+                        time_spent = curr - first_run
+                        if time_spent >= time_allowed:
+                            is_expired = True
+                            trial_d = float(self.trial_days)
+                            if trial_d < (1.0 / 24.0):
+                                mins = max(1, int(round(trial_d * 1440)))
+                                msg = f"❌ ĐÃ HẾT THỜI GIAN DÙNG THỬ ({mins} PHÚT)!"
+                            elif trial_d < 1.0:
+                                hrs = max(1, int(round(trial_d * 24)))
+                                msg = f"❌ ĐÃ HẾT THỜI GIAN DÙNG THỬ ({hrs} GIỜ)!"
+                            elif trial_d >= 365.0:
+                                yrs = max(1, int(round(trial_d / 365.0)))
+                                msg = f"❌ ĐÃ HẾT THỜI GIAN DÙNG THỬ ({yrs} NĂM)!"
+                            elif trial_d >= 30.0:
+                                mos = max(1, int(round(trial_d / 30.0)))
+                                msg = f"❌ ĐÃ HẾT THỜI GIAN DÙNG THỬ ({mos} THÁNG)!"
+                            else:
+                                days = max(1, int(round(trial_d)))
+                                msg = f"❌ ĐÃ HẾT THỜI GIAN DÙNG THỬ ({days} NGÀY)!"
+
+                    # 2. Kiểm tra Key bản quyền có hạn
+                    elif not is_trial and expiry_ts > 0:
+                        if curr > expiry_ts:
+                            is_expired = True
+                            msg = "❌ LICENSE KEY ĐÃ HẾT HẠN SỬ DỤNG!"
+
+                    if is_expired:
+                        # Lưu lại trạng thái hết hạn vào 3 tầng bảo vệ
                         stored = LicenseStorage.load_data(self.app_name)
                         stored["last_seen_time"] = curr
                         LicenseStorage.save_data(self.app_name, stored)
                         
-                        # 3. Hiện thông báo cảnh báo nổi lên trên cùng (TopMost) và đóng ứng dụng
+                        # Hiện thông báo cảnh báo nổi lên trên cùng (TopMost) và đóng ứng dụng để mở bảng Key
+                        full_msg = f"{msg}\n\nỨng dụng đã tự động dừng lại.\nVui lòng khởi động lại ứng dụng để nhập License Key bản quyền tiếp tục sử dụng."
                         if sys.platform == "win32":
                             try:
                                 MB_ICONSTOP = 0x10
                                 MB_TOPMOST = 0x40000
-                                ctypes.windll.user32.MessageBoxW(0, msg, f"Hết Hạn Dùng Thử - {self.app_name}", MB_ICONSTOP | MB_TOPMOST)
+                                ctypes.windll.user32.MessageBoxW(0, full_msg, f"Hết Hạn - {self.app_name}", MB_ICONSTOP | MB_TOPMOST)
                             except Exception:
                                 pass
                         os._exit(0)
@@ -599,6 +616,14 @@ class LicenseGuard:
             valid, msg, payload = self.verifier.verify_key(saved_key, self.hwid, current_time)
             if valid:
                 LicenseStorage.save_data(self.app_name, stored_data)
+                # Nếu key có ngày hết hạn -> Kích hoạt watcher 5s kiểm tra khi key hết hạn
+                expiry = payload.get("expiry", "")
+                if expiry != "LIFETIME":
+                    try:
+                        exp_dt = datetime.datetime.strptime(expiry, "%Y-%m-%d").replace(hour=23, minute=59, second=59)
+                        self._start_runtime_watcher(expiry_ts=exp_dt.timestamp(), is_trial=False)
+                    except Exception:
+                        pass
                 return True
                 
         # 3. Kiểm tra Trial Mode
@@ -614,8 +639,8 @@ class LicenseGuard:
             
             if time_spent < time_allowed:
                 LicenseStorage.save_data(self.app_name, stored_data)
-                # Bắt đầu luồng giám sát thời gian thực tự động đóng app khi chạm mốc hết hạn
-                self._start_runtime_trial_watcher(time_allowed, first_run)
+                # Bắt đầu luồng kiểm tra liên tục 5 giây/lần
+                self._start_runtime_watcher(time_allowed=time_allowed, first_run=first_run, is_trial=True)
                 return True
             else:
                 trial_d = float(self.trial_days)
@@ -625,8 +650,14 @@ class LicenseGuard:
                 elif trial_d < 1.0:
                     hrs = max(1, int(round(trial_d * 24)))
                     trial_msg = f"❌ ĐÃ HẾT THỜI GIAN DÙNG THỬ ({hrs} GIỜ)! Vui lòng kích hoạt bản quyền."
+                elif trial_d >= 365.0:
+                    yrs = max(1, int(round(trial_d / 365.0)))
+                    trial_msg = f"❌ ĐÃ HẾT THỜI GIAN DÙNG THỬ ({yrs} NĂM)! Vui lòng kích hoạt bản quyền."
+                elif trial_d >= 30.0:
+                    mos = max(1, int(round(trial_d / 30.0)))
+                    trial_msg = f"❌ ĐÃ HẾT THỜI GIAN DÙNG THỬ ({mos} THÁNG)! Vui lòng kích hoạt bản quyền."
                 else:
-                    days = int(round(trial_d))
+                    days = max(1, int(round(trial_d)))
                     trial_msg = f"❌ ĐÃ HẾT THỜI GIAN DÙNG THỬ ({days} NGÀY)! Vui lòng kích hoạt bản quyền."
         else:
             trial_msg = "🔒 Ứng dụng yêu cầu kích hoạt bản quyền để sử dụng."
