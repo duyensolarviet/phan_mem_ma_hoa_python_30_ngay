@@ -538,6 +538,49 @@ class LicenseGuard:
         self.hwid = HardwareID.generate_hwid()
         self.verifier = LicenseVerifier(public_key_pem)
 
+    def _start_runtime_trial_watcher(self, time_allowed: float, first_run: float):
+        """Luồng ngầm giám sát thời gian thực: Tự động khóa và đóng ứng dụng ngay lập tức khi hết hạn dùng thử lúc app đang mở."""
+        def _watcher_loop():
+            # Kiểm tra mỗi 5 giây cho các gói theo phút/giờ, 30 giây cho các gói theo ngày
+            sleep_interval = 5.0 if time_allowed <= 86400.0 else 30.0
+            while True:
+                time.sleep(sleep_interval)
+                try:
+                    curr = time.time()
+                    time_spent = curr - first_run
+                    if time_spent >= time_allowed:
+                        # 1. Định dạng thông báo hết hạn
+                        trial_d = float(self.trial_days)
+                        if trial_d < (1.0 / 24.0):
+                            mins = max(1, int(round(trial_d * 1440)))
+                            msg = f"❌ ĐÃ HẾT THỜI GIAN DÙNG THỬ ({mins} PHÚT)!\n\nỨng dụng sẽ tự động đóng ngay bây giờ.\nVui lòng liên hệ Admin qua Zalo/Telegram để kích hoạt bản quyền."
+                        elif trial_d < 1.0:
+                            hrs = max(1, int(round(trial_d * 24)))
+                            msg = f"❌ ĐÃ HẾT THỜI GIAN DÙNG THỬ ({hrs} GIỜ)!\n\nỨng dụng sẽ tự động đóng ngay bây giờ.\nVui lòng liên hệ Admin qua Zalo/Telegram để kích hoạt bản quyền."
+                        else:
+                            days = int(round(trial_d))
+                            msg = f"❌ ĐÃ HẾT THỜI GIAN DÙNG THỬ ({days} NGÀY)!\n\nỨng dụng sẽ tự động đóng ngay bây giờ.\nVui lòng liên hệ Admin qua Zalo/Telegram để kích hoạt bản quyền."
+                        
+                        # 2. Cập nhật và lưu lại trạng thái hết hạn vào 3 tầng bảo vệ
+                        stored = LicenseStorage.load_data(self.app_name)
+                        stored["last_seen_time"] = curr
+                        LicenseStorage.save_data(self.app_name, stored)
+                        
+                        # 3. Hiện thông báo cảnh báo nổi lên trên cùng (TopMost) và đóng ứng dụng
+                        if sys.platform == "win32":
+                            try:
+                                MB_ICONSTOP = 0x10
+                                MB_TOPMOST = 0x40000
+                                ctypes.windll.user32.MessageBoxW(0, msg, f"Hết Hạn Dùng Thử - {self.app_name}", MB_ICONSTOP | MB_TOPMOST)
+                            except Exception:
+                                pass
+                        os._exit(0)
+                except Exception:
+                    pass
+
+        t = threading.Thread(target=_watcher_loop, daemon=True, name="TrialRuntimeEnforcer")
+        t.start()
+
     def verify_and_protect(self):
         current_time = TimeGuard.get_trusted_time()
         stored_data = LicenseStorage.load_data(self.app_name)
@@ -571,6 +614,8 @@ class LicenseGuard:
             
             if time_spent < time_allowed:
                 LicenseStorage.save_data(self.app_name, stored_data)
+                # Bắt đầu luồng giám sát thời gian thực tự động đóng app khi chạm mốc hết hạn
+                self._start_runtime_trial_watcher(time_allowed, first_run)
                 return True
             else:
                 trial_d = float(self.trial_days)
