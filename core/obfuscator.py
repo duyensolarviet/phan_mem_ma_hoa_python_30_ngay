@@ -2,11 +2,11 @@
 Module: core/obfuscator.py
 Mục đích: SIÊU LÕI LÀM RỐI MÃ NGUỒN CẤP ĐỘ QUÂN SỰ (MILITARY-GRADE AST POLYMORPHIC OBFUSCATION).
 Tính năng:
-1. String Virtualization: Biến đổi 100% chuỗi ký tự thành biểu thức giải mã XOR + Bitwise Rotate động.
-2. Opaque Predicates: Chèn các bất đẳng thức toán học bất biến (Mathematical Invariants) để đánh lừa Decompiler.
-3. Control Flow Flattening: Bẻ phẳng luồng điều khiển code thành các trạng thái State-Machine phức tạp.
-4. Dead Code & Junk Opcode Injection: Chèn hàng trăm hàm và vòng lặp ma gây kiệt quệ tài nguyên của Decompiler.
-5. Mangling: Biến đổi tên biến và hàm thành các ký tự ma trận (`_0xIl1O0...`).
+1. String Virtualization: Biến đổi 100% chuỗi ký tự thành biểu thức giải mã XOR + Bitwise Rotate + Salt động.
+2. Number & Boolean Virtualization: Biến đổi các số nguyên và giá trị boolean thành biểu thức toán học / Bitwise.
+3. Opaque Predicates: Chèn các bất đẳng thức toán học bất biến (Mathematical Invariants) để đánh lừa Decompiler.
+4. Dead Code & Junk Injection: Chèn hàng trăm biểu thức ma gây kiệt quệ giải thuật phân tích luồng của Decompiler.
+5. Multi-Layer Polymorphic Wrapper: Bọc thêm lớp giải mã nhị phân Base64 + Dynamic Byte-shift Loader.
 """
 
 import ast
@@ -22,6 +22,37 @@ def _generate_random_var_name(length: int = 18) -> str:
     chars = "Il1O0" + string.ascii_letters + string.digits + "_"
     suffix = "".join(random.choice(chars) for _ in range(length))
     return f"{prefix}{suffix}"
+
+
+class MilitaryNumberTransformer(ast.NodeTransformer):
+    """Biến đổi các số nguyên và giá trị boolean thành biểu thức bitwise / toán học động."""
+    def visit_Constant(self, node):
+        if type(node.value) is int and not isinstance(node.value, bool):
+            val = node.value
+            if 2 <= abs(val) <= 1000000:
+                k = random.randint(10, 250)
+                masked = val ^ k
+                expr = f"({masked} ^ {k})"
+                try:
+                    new_node = ast.parse(expr).body[0].value
+                    return ast.copy_location(new_node, node)
+                except Exception:
+                    return node
+        elif type(node.value) is bool:
+            if node.value is True:
+                r1 = random.randint(10, 50)
+                r2 = r1 + random.randint(1, 10)
+                expr = f"({r2} > {r1})"
+            else:
+                r1 = random.randint(10, 50)
+                r2 = r1 + random.randint(1, 10)
+                expr = f"({r1} > {r2})"
+            try:
+                new_node = ast.parse(expr).body[0].value
+                return ast.copy_location(new_node, node)
+            except Exception:
+                return node
+        return node
 
 
 class MilitaryStringEncryptor(ast.NodeTransformer):
@@ -73,9 +104,9 @@ class MilitaryStringEncryptor(ast.NodeTransformer):
 class OpaquePredicateInjector(ast.NodeTransformer):
     """
     Chèn các biểu thức bất đẳng thức toán học (Opaque Predicates) vào hàm sync và async:
-    - (x * x >= 0) luôn True
     - (x * (x + 1) % 2 == 0) luôn True với mọi số nguyên x
-    - (x^2 + y^2 < 0) luôn False
+    - (x^2 + 1 < 0) luôn False
+    - (x ^ x != 0) luôn False
     Làm tê liệt hoàn toàn thuật toán phân tích luồng điều khiển của IDA Pro, Ghidra và PyCDC.
     """
     def __init__(self):
@@ -117,6 +148,7 @@ class OpaquePredicateInjector(ast.NodeTransformer):
 def obfuscate_python_source(
     source_code: str,
     encrypt_strings: bool = True,
+    transform_numbers: bool = True,
     inject_dead_code: bool = True,
     add_layer_wrapper: bool = True
 ) -> str:
@@ -126,6 +158,10 @@ def obfuscate_python_source(
     try:
         tree = ast.parse(source_code)
         
+        if transform_numbers:
+            num_trans = MilitaryNumberTransformer()
+            tree = num_trans.visit(tree)
+            
         if encrypt_strings:
             str_enc = MilitaryStringEncryptor()
             tree = str_enc.visit(tree)

@@ -9,3 +9,4 @@ build/
 *.tmp
 _temp_wrapped_*.py
 builder_config.json
+scratch/

@@ -135,6 +135,45 @@ import json
 import ctypes
 
 # --- TỰ ĐỘNG THIẾT LẬP MÔI TRƯỜNG VÀ ĐƯỜNG DẪN IMPORT AN TOÀN CHO DỰ ÁN ---
+import subprocess
+if sys.platform == "win32":
+    try:
+        _orig_popen = subprocess.Popen
+        class _SilentPopen(_orig_popen):
+            def __init__(self, *args, **kwargs):
+                flags = kwargs.get('creationflags', 0)
+                kwargs['creationflags'] = flags | 0x08000000 # CREATE_NO_WINDOW
+                si = kwargs.get('startupinfo')
+                if si is None:
+                    si = subprocess.STARTUPINFO()
+                si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                si.wShowWindow = 0 # SW_HIDE
+                kwargs['startupinfo'] = si
+                super().__init__(*args, **kwargs)
+
+        subprocess.Popen = _SilentPopen
+
+        def _silent_os_system(cmd):
+            try:
+                p = subprocess.Popen(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                return p.wait()
+            except Exception:
+                return -1
+
+        os.system = _silent_os_system
+
+        def _silent_os_popen(cmd, mode='r', buffering=-1):
+            if 'r' in mode:
+                p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=('b' not in mode))
+                return p.stdout
+            else:
+                p = subprocess.Popen(cmd, shell=True, stdin=subprocess.PIPE, text=('b' not in mode))
+                return p.stdin
+
+        os.popen = _silent_os_popen
+    except Exception:
+        pass
+
 if getattr(sys, 'frozen', False):
     _MEI_DIR = getattr(sys, '_MEIPASS', os.path.dirname(sys.executable))
     _EXE_DIR = os.path.dirname(sys.executable)
@@ -156,7 +195,8 @@ for _base in _SEARCH_ROOTS:
             if os.path.isdir(_src_sub) and _src_sub not in sys.path:
                 sys.path.insert(0, _src_sub)
 
-# --- TỰ ĐỘNG BUNDLE TOÀN BỘ CÁC MODULE DEPENDENCY CỦA DỰ ÁN ---
+# --- GỢI Ý MODULE CHO PYINSTALLER (KHÔNG CHẠY TRỰC TIẾP ĐỂ MỞ APP TỨC THÌ) ---
+if False:
 {IMPORT_HINTS_CODE}
 
 # --- 1. TIÊM MODULE CHỐNG DEBUG, HARDWARE BREAKPOINTS & VM/SANDBOX ---
@@ -221,11 +261,11 @@ def prepare_protected_script(
         user_code = f.read()
 
     if security_level == "ultimate":
-        obfuscated_user_code = obfuscate_python_source(user_code, encrypt_strings=True, inject_dead_code=True, add_layer_wrapper=False)
+        obfuscated_user_code = obfuscate_python_source(user_code, encrypt_strings=True, transform_numbers=True, inject_dead_code=True, add_layer_wrapper=False)
         pkg_b64, salt_b64 = encrypt_user_payload(obfuscated_user_code, hwid_binding="")
         payload_exec_code = build_in_memory_loader_template(pkg_b64, salt_b64, hwid_binding="")
     elif security_level == "advanced":
-        payload_exec_code = obfuscate_python_source(user_code, encrypt_strings=True, inject_dead_code=True, add_layer_wrapper=True)
+        payload_exec_code = obfuscate_python_source(user_code, encrypt_strings=True, transform_numbers=True, inject_dead_code=True, add_layer_wrapper=True)
     else:
         payload_exec_code = user_code
 
@@ -248,8 +288,8 @@ def prepare_protected_script(
     _, detected_dotted = extract_project_imports(project_dir, source_file)
     import_hints_lines = []
     for mod in detected_dotted:
-        import_hints_lines.append(f"try:\n    import {mod}\nexcept Exception:\n    pass")
-    import_hints_code = "\n".join(import_hints_lines) if import_hints_lines else "# No external imports detected"
+        import_hints_lines.append(f"    try:\n        import {mod}\n    except Exception:\n        pass")
+    import_hints_code = "\n".join(import_hints_lines) if import_hints_lines else "    pass"
 
     supp_json = json.dumps(support_config or {}, ensure_ascii=False)
 
@@ -388,7 +428,7 @@ def build_executable(
                 final_ico_path = converted
                 log(f"[✓] Đã tạo file Icon thành công: {converted}")
 
-    log(f"[*] Cấp độ bảo vệ: {security_level.upper()} (AES-256 In-Memory Decryption)")
+    log(f"[*] Cấp độ bảo vệ: {security_level.upper()} (God-Tier Cascade: AES-256-GCM + ChaCha20-Poly1305 + In-Memory Decryption)")
     log(f"[*] Thư mục xuất file .EXE đích: {os.path.abspath(output_dir)}")
     
     work_dir = project_dir if (project_dir and os.path.exists(project_dir)) else os.path.dirname(os.path.abspath(target_script))

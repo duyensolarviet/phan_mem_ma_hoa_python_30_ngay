@@ -2,6 +2,7 @@
 
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 [![AES-256-GCM](https://img.shields.io/badge/Encryption-AES--256--GCM-green.svg)]()
+[![ChaCha20-Poly1305](https://img.shields.io/badge/Stream--Cipher-ChaCha20--Poly1305-blue.svg)]()
 [![RSA-PSS](https://img.shields.io/badge/License-RSA--PSS%20NIST-purple.svg)]()
 [![Platform: Windows](https://img.shields.io/badge/Platform-Windows-lightgrey.svg)]()
 
@@ -9,16 +10,20 @@
 
 ---
 
-## 🌟 CÁC TÍNH NĂNG BẢO MẬT ĐỈNH CAO
+## 🌟 CÁC TÍNH NĂNG BẢO MẬT ĐỈNH CAO (GOD-TIER BEAST EDITION)
 
-1. **Mã Hóa AES-256 GCM In-Memory Decryption (Zero-Disk Footprint):**
-   - Nén mã nguồn bằng `zlib` và mã hóa chuẩn quân sự **AES-256-GCM**.
-   - Toàn bộ quá trình giải mã và nạp code thực thi trực tiếp trên **RAM**. Tuyệt đối không trích xuất file `.py` hay `.pyc` tạm ra ổ đĩa.
-2. **Làm Rối Mã Nguồn Đa Tầng (Polymorphic AST Obfuscation):**
-   - Biến đổi 100% chuỗi ký tự thành biểu thức toán học giải mã XOR + Bitwise Rotate động.
-   - Chèn các hàm ma, dead code và opaque predicates để đánh lừa mọi công cụ decompiler (`pycdc`, `uncompyle6`, `decompyle++`).
-3. **Lõi Anti-Debug, Anti-Dump & Anti-VM:**
-   - Tự động phát hiện và chặn các trình phân tích động: `x64dbg`, `Cheat Engine`, `Process Hacker`, `IDA Pro`, `Wireshark`...
+1. **Mã Hóa Xếp Tầng Đa Chuẩn Quân Sự (Cascade Dual-Cipher: AES-256-GCM + ChaCha20-Poly1305):**
+   - Nén mã nguồn bằng `zlib` level 9 tối đa.
+   - Mã hóa 3 tầng liên hoàn: **Dynamic Byte Transmutation** + **ChaCha20-Poly1305** (IETF RFC 8439) + **AES-256-GCM** (NIST).
+   - Khóa sinh ngẫu nhiên qua hàm dẫn xuất mật mã **PBKDF2-HMAC-SHA512** (50.000 vòng lặp).
+   - Giải mã trực tiếp trên **RAM (Zero-Disk Footprint)** và xóa trắng bộ nhớ C cấp thấp bằng `ctypes.memset` chống Memory Dumper.
+2. **Làm Rối Mã Nguồn AST Đa Tầng (Polymorphic AST Obfuscation):**
+   - **String Virtualization:** Biến đổi 100% chuỗi ký tự thành biểu thức giải mã XOR + Bitwise Rotate + Salt động.
+   - **Number & Boolean Virtualization:** Biến đổi toàn bộ số nguyên và boolean thành các biểu thức bitwise động.
+   - **Opaque Predicates:** Chèn các bất đẳng thức toán học bất biến gây kiệt quệ giải thuật decompiler (`pycdc`, `uncompyle6`, `decompyle++`, `IDA Pro`, `Ghidra`).
+3. **Lõi Anti-Debug, Anti-Dump, Anti-Trace & Anti-VM (11 Lớp Phòng Thủ):**
+   - Tự động phát hiện và chặn các trình phân tích động: `x64dbg`, `Cheat Engine`, `Process Hacker`, `IDA Pro`, `Wireshark`, `PyCDC`, `PyInstxtractor`...
+   - Khóa và bảo vệ Python Runtime: Chặn `sys.settrace`, `sys.setprofile`, phát hiện hooking trên `builtins.exec` và `marshal.loads`.
    - Kiểm tra thanh ghi phần cứng CPU (`DR0-DR7`) để chống Hardware Breakpoints.
    - Tự động nhận diện và chặn môi trường máy ảo / Sandbox (`VMware`, `VirtualBox`, `Sandboxie`, `QEMU`).
 4. **Khóa Bản Quyền HWID 2.0 & Chữ Ký Số RSA-PSS:**

@@ -8,10 +8,11 @@ Công nghệ tối thượng:
 4. Native NT API Debug Port & Debug Flags (NtQueryInformationProcess).
 5. CPU Hardware Debug Registers (DR0 - DR7 Register Watcher).
 6. High-Resolution Timing & RDTSC Stepping Detection.
-7. Window Class & Title Heuristic Scanner (x64dbg, IDA Pro, Cheat Engine, Process Hacker, Wireshark, Fiddler...).
+7. Window Class & Title Heuristic Scanner (x64dbg, IDA Pro, Cheat Engine, Process Hacker, Wireshark, Fiddler, PyCDC...).
 8. Injected DLL / API Hooking Detection (Frida, Scylla, ApiMonitor, SbieDll...).
 9. Dual-Thread Heartbeat Watchdog (Chống hacker tạm dừng/Suspend luồng giám sát).
 10. Anti-VM & Sandbox Isolation Guard (VMware, VirtualBox, Sandboxie, Cuckoo, QEMU).
+11. Python Runtime Anti-Trace & Reflection Hooking Check (sys.gettrace, sys.getprofile, builtins.exec integrity).
 """
 
 import sys
@@ -21,6 +22,7 @@ import ctypes
 import subprocess
 import threading
 import winreg
+import builtins
 
 if sys.platform == "win32":
     try:
@@ -36,14 +38,15 @@ BLACKLISTED_PROCESSES = [
     "wireshark.exe", "fiddler.exe", "httpdebugger.exe", "httpdebuggerui.exe",
     "dnspy.exe", "processhacker.exe", "ollydbg.exe", "scylla.exe", "scylla_x64.exe", "scylla_x86.exe",
     "pestudio.exe", "ghidra.exe", "de4dot.exe", "procexp.exe",
-    "cutter.exe", "windbg.exe", "snowman.exe", "radare2.exe", "apimonitor-x64.exe", "apimonitor-x86.exe"
+    "cutter.exe", "windbg.exe", "snowman.exe", "radare2.exe", "apimonitor-x64.exe", "apimonitor-x86.exe",
+    "pycdc.exe", "pyinstxtractor.exe", "uncompyle6.exe", "decompyle++.exe"
 ]
 
 # 2. Danh sách tiêu đề cửa sổ cấm
 BLACKLISTED_TITLES = [
     "x64dbg", "x32dbg", "ida pro", "cheat engine", "process hacker",
     "wireshark", "fiddler", "http debugger", "dnspy", "scylla", "ghidra",
-    "api monitor", "ollydbg", "decompyle", "uncompyle", "pycdc"
+    "api monitor", "ollydbg", "decompyle", "uncompyle", "pycdc", "pyinstxtractor"
 ]
 
 # 3. Danh sách DLL hook / máy ảo / injection
@@ -312,6 +315,18 @@ def check_blacklisted_processes() -> bool:
     return False
 
 
+def check_python_tracing() -> bool:
+    """Kiểm tra xem Python runtime có đang bị hook sys.settrace / getprofile hoặc builtins bị ghi đè không."""
+    try:
+        if sys.gettrace() is not None or sys.getprofile() is not None:
+            return True
+        if not isinstance(builtins.exec, type(print)):
+            return True
+    except Exception:
+        return True
+    return False
+
+
 def self_terminate(reason="Security Violation"):
     """Hủy diệt tiến trình tức thì bằng Win32 TerminateProcess (Chống chặn bắt ngoại lệ)."""
     try:
@@ -323,9 +338,11 @@ def self_terminate(reason="Security Violation"):
 
 
 def run_full_security_check() -> bool:
-    """Thực thi kiểm tra an ninh toàn diện 10 tầng bảo vệ."""
+    """Thực thi kiểm tra an ninh toàn diện 11 tầng bảo vệ."""
     hide_thread_from_debugger()
     
+    if check_python_tracing():
+        return False
     if check_ntdll_inline_hooks():
         return False
     if is_debugger_present():
